@@ -13,7 +13,7 @@ struct HondenwedstrijdApp: App {
     
     var body: some Scene {
         WindowGroup {
-            ContentView()
+            Views.ContentView()
         }
     }
 }
