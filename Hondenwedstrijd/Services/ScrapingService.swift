@@ -26,31 +26,37 @@ class ScrapingService: ObservableObject {
             }
             
             let rows = try table.select("tr")
-            if let rows = rows {
-                let rowsArray = Array(rows).dropFirst() // Skip header row
-                matches = try rowsArray.compactMap { row in
-                    let columns = try row.select("td")
-                    if columns.count >= 7 {
-                        let date = try columns[0].text()
-                        let type = try columns[1].text()
-                        let category = try columns[2].text()
-                        let organizer = try columns[3].text()
-                        let location = try columns[4].text()
-                        let notes = try columns[5].text()
-                        let registrationStatus = try columns[6].text()
-                        
-                        return Match(
-                            date: date,
-                            type: type,
-                            category: category,
-                            organizer: organizer,
-                            location: location,
-                            notes: notes,
-                            registrationStatus: Match.RegistrationStatus(rawValue: registrationStatus) ?? .notAvailable
-                        )
+            let rowsArray = Array(rows).dropFirst() // Skip header row
+            
+            matches = try rowsArray.compactMap { row in
+                let columns = try row.select("td")
+                if columns.count >= 7 {
+                    let dateString = try columns[0].text()
+                    let type = try columns[1].text()
+                    let category = try columns[2].text()
+                    let organizer = try columns[3].text()
+                    let location = try columns[4].text()
+                    let notes = try columns[5].text()
+                    let registrationStatus = try columns[6].text()
+                    
+                    // Convert date string to Date
+                    let dateFormatter = DateFormatter()
+                    dateFormatter.dateFormat = "dd-MM-yyyy"
+                    guard let date = dateFormatter.date(from: dateString) else {
+                        return nil
                     }
-                    return nil
+                    
+                    return Match(
+                        date: date,
+                        type: type,
+                        category: category,
+                        organizer: organizer,
+                        location: location,
+                        notes: notes,
+                        registrationStatus: Match.RegistrationStatus(rawValue: registrationStatus) ?? .notAvailable
+                    )
                 }
+                return nil
             }
         } catch {
             self.error = error
