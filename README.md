@@ -55,4 +55,9 @@ Voor vragen of problemen, neem contact op via:
 
 ## Licentie
 
-Dit project is eigendom van [Eigenaar] en is niet open source. 
+Dit project is eigendom van [Eigenaar] en is niet open source.
+
+## Laatste Update
+- GitHub integratie getest en bevestigd
+- Basis app structuur geïmplementeerd
+- Scraping functionaliteit toegevoegd 
