@@ -1,94 +1,62 @@
 import Foundation
 import SwiftSoup
 
+@MainActor
 class ScrapingService: ObservableObject {
     @Published var matches: [Match] = []
     @Published var isLoading = false
     @Published var error: Error?
-    @Published var categories: Set<String> = []
     
-    private let baseURL = "https://my.orweja.nl/home/kalender/1"
+    var categories: Set<String> {
+        Set(matches.map { $0.category })
+    }
     
     func fetchMatches() async {
-        DispatchQueue.main.async {
-            self.isLoading = true
-            self.error = nil
-        }
+        isLoading = true
+        error = nil
         
         do {
-            guard let url = URL(string: baseURL) else {
-                throw URLError(.badURL)
-            }
-            
+            let url = URL(string: "https://www.hondenwedstrijd.nl/")!
             let (data, _) = try await URLSession.shared.data(from: url)
-            guard let htmlString = String(data: data, encoding: .utf8) else {
-                throw NSError(domain: "ScrapingError", code: 1, userInfo: [NSLocalizedDescriptionKey: "Could not decode HTML data"])
+            let html = String(data: data, encoding: .utf8)!
+            let doc = try SwiftSoup.parse(html)
+            
+            guard let table = try doc.select("table").first() else {
+                throw ScrapingError.tableNotFound
             }
             
-            let doc = try SwiftSoup.parse(htmlString)
-            let table = try doc.select("table").first()
-            let rows = try table?.select("tr")
-            
-            var parsedMatches: [Match] = []
-            var uniqueCategories = Set<String>()
-            
-            // Skip header row and process remaining rows
+            let rows = try table.select("tr")
             if let rows = rows {
-                let dataRows = Array(rows.dropFirst())
-                for row in dataRows {
+                let rowsArray = Array(rows).dropFirst() // Skip header row
+                matches = try rowsArray.compactMap { row in
                     let columns = try row.select("td")
-                    guard columns.count >= 7 else { continue }
-                    
-                    let dateString = try columns[0].text()
-                    let type = try columns[1].text()
-                    let category = try columns[2].text()
-                    let organizer = try columns[3].text()
-                    let location = try columns[4].text()
-                    let notes = try columns[5].text()
-                    let registrationText = try columns[6].text()
-                    
-                    let dateFormatter = DateFormatter()
-                    dateFormatter.dateFormat = "dd-MM-yyyy"
-                    guard let date = dateFormatter.date(from: dateString) else { continue }
-                    
-                    let registrationStatus: Match.RegistrationStatus
-                    switch registrationText.lowercased() {
-                    case "inschrijven":
-                        registrationStatus = .available
-                    case "nog niet beschikbaar":
-                        registrationStatus = .notAvailable
-                    case "gesloten":
-                        registrationStatus = .closed
-                    default:
-                        registrationStatus = .notAvailable
+                    if columns.count >= 7 {
+                        let date = try columns[0].text()
+                        let type = try columns[1].text()
+                        let category = try columns[2].text()
+                        let organizer = try columns[3].text()
+                        let location = try columns[4].text()
+                        let notes = try columns[5].text()
+                        let registrationStatus = try columns[6].text()
+                        
+                        return Match(
+                            date: date,
+                            type: type,
+                            category: category,
+                            organizer: organizer,
+                            location: location,
+                            notes: notes,
+                            registrationStatus: Match.RegistrationStatus(rawValue: registrationStatus) ?? .notAvailable
+                        )
                     }
-                    
-                    let match = Match(
-                        date: date,
-                        type: type,
-                        category: category,
-                        organizer: organizer,
-                        location: location,
-                        notes: notes,
-                        registrationStatus: registrationStatus
-                    )
-                    
-                    parsedMatches.append(match)
-                    uniqueCategories.insert(category)
+                    return nil
                 }
             }
-            
-            DispatchQueue.main.async {
-                self.matches = parsedMatches.sorted { $0.date < $1.date }
-                self.categories = uniqueCategories
-                self.isLoading = false
-            }
         } catch {
-            DispatchQueue.main.async {
-                self.isLoading = false
-                self.error = error
-            }
+            self.error = error
         }
+        
+        isLoading = false
     }
     
     func filteredMatches(category: String? = nil, status: Match.RegistrationStatus? = nil) -> [Match] {
@@ -98,4 +66,8 @@ class ScrapingService: ObservableObject {
             return categoryMatch && statusMatch
         }
     }
+}
+
+enum ScrapingError: Error {
+    case tableNotFound
 } 

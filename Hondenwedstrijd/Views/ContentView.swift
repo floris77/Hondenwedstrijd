@@ -187,7 +187,7 @@ struct NotificationSettingsView: View {
             Form {
                 Section(header: Text("Notificaties").foregroundColor(ColorTheme.text)) {
                     Toggle("Push Notificaties", isOn: $notificationService.isPushNotificationsEnabled)
-                        .onChange(of: notificationService.isPushNotificationsEnabled) { newValue in
+                        .onChange(of: notificationService.isPushNotificationsEnabled) { oldValue, newValue in
                             if newValue {
                                 notificationService.requestPushNotificationPermission()
                             }
