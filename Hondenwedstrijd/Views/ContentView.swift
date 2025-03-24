@@ -385,9 +385,9 @@ struct FlowLayout: Layout {
         let rows = computeRows(proposal: proposal, subviews: subviews)
         
         var height: CGFloat = 0
-        for row in rows {
+        for (index, row) in rows.enumerated() {
             height += row.maxY
-            if row != rows.last {
+            if index < rows.count - 1 {
                 height += spacing
             }
         }
