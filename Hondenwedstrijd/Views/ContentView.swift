@@ -25,6 +25,7 @@ struct ContentView: View {
             await scrapingService.fetchMatches()
         }
         .tint(ColorTheme.primary)
+        .background(ColorTheme.background)
     }
 }
 
@@ -96,6 +97,7 @@ struct MatchListView: View {
                             MatchRow(match: match)
                         }
                         .listStyle(PlainListStyle())
+                        .scrollContentBackground(.hidden)
                     }
                 }
             }
@@ -119,9 +121,10 @@ struct FilterChip: View {
                 .font(.subheadline)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 6)
-                .background(isSelected ? ColorTheme.primary : ColorTheme.secondary.opacity(0.2))
+                .background(isSelected ? ColorTheme.primary : ColorTheme.secondary.opacity(0.1))
                 .foregroundColor(isSelected ? .white : ColorTheme.text)
                 .cornerRadius(20)
+                .shadow(color: isSelected ? ColorTheme.primary.opacity(0.3) : Color.clear, radius: 3, x: 0, y: 2)
         }
     }
 }
@@ -141,11 +144,11 @@ struct MatchRow: View {
             
             Text(match.location)
                 .font(.subheadline)
-                .foregroundColor(ColorTheme.text)
+                .foregroundColor(ColorTheme.text.opacity(0.8))
             
             Text(match.date, style: .date)
                 .font(.subheadline)
-                .foregroundColor(ColorTheme.text)
+                .foregroundColor(ColorTheme.text.opacity(0.8))
             
             HStack {
                 Text(match.registrationStatus.rawValue)
@@ -157,11 +160,11 @@ struct MatchRow: View {
                     .cornerRadius(4)
             }
         }
-        .padding(.vertical, 4)
-        .padding(.horizontal, 8)
+        .padding(.vertical, 8)
+        .padding(.horizontal, 12)
         .background(Color.white)
-        .cornerRadius(8)
-        .shadow(radius: 2)
+        .cornerRadius(12)
+        .shadow(color: ColorTheme.primary.opacity(0.1), radius: 4, x: 0, y: 2)
     }
     
     private var registrationStatusColor: Color {
@@ -182,7 +185,7 @@ struct NotificationSettingsView: View {
     var body: some View {
         NavigationView {
             Form {
-                Section(header: Text("Notificaties")) {
+                Section(header: Text("Notificaties").foregroundColor(ColorTheme.text)) {
                     Toggle("Push Notificaties", isOn: $notificationService.isPushNotificationsEnabled)
                         .onChange(of: notificationService.isPushNotificationsEnabled) { newValue in
                             if newValue {
@@ -194,12 +197,15 @@ struct NotificationSettingsView: View {
                     Toggle("E-mail Notificaties", isOn: $notificationService.isEmailNotificationsEnabled)
                 }
                 
-                Section(header: Text("Over"), footer: Text("Versie 1.0.0")) {
+                Section(header: Text("Over").foregroundColor(ColorTheme.text), footer: Text("Versie 1.0.0").foregroundColor(ColorTheme.text.opacity(0.6))) {
                     Text("Hondenwedstrijd App")
+                        .foregroundColor(ColorTheme.text)
                 }
             }
             .navigationTitle("Instellingen")
             .tint(ColorTheme.primary)
+            .scrollContentBackground(.hidden)
+            .background(ColorTheme.background)
         }
     }
 }

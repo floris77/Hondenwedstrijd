@@ -48,6 +48,9 @@ struct OnboardingView: View {
                                 .scaledToFit()
                                 .frame(width: 100, height: 100)
                                 .foregroundColor(ColorTheme.primary)
+                                .padding()
+                                .background(ColorTheme.secondary.opacity(0.1))
+                                .clipShape(Circle())
                             
                             Text(page.title)
                                 .font(.title)
@@ -56,7 +59,7 @@ struct OnboardingView: View {
                             
                             Text(page.description)
                                 .multilineTextAlignment(.center)
-                                .foregroundColor(ColorTheme.text)
+                                .foregroundColor(ColorTheme.text.opacity(0.8))
                                 .padding(.horizontal)
                         }
                         .tag(index)
@@ -64,6 +67,7 @@ struct OnboardingView: View {
                 }
                 .tabViewStyle(PageTabViewStyle())
                 .indexViewStyle(PageIndexViewStyle(backgroundDisplayMode: .always))
+                .tint(ColorTheme.primary)
                 
                 Button(action: {
                     if currentPage < pages.count - 1 {
@@ -80,6 +84,7 @@ struct OnboardingView: View {
                         .frame(width: 200, height: 50)
                         .background(ColorTheme.primary)
                         .cornerRadius(25)
+                        .shadow(color: ColorTheme.primary.opacity(0.3), radius: 5, x: 0, y: 2)
                 }
                 .padding(.bottom, 50)
             }
