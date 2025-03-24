@@ -27,22 +27,23 @@ class ScrapingService: ObservableObject {
             
             let doc = try SwiftSoup.parse(htmlString)
             let table = try doc.select("table").first()
-            let rows = try table?.select("tr").dropFirst() // Skip header row
+            let rows = try table?.select("tr")
             
             var parsedMatches: [Match] = []
             var uniqueCategories = Set<String>()
             
-            for row in rows ?? [] {
+            // Skip header row
+            for row in rows?.dropFirst() ?? [] {
                 let columns = try row.select("td")
-                guard columns.count >= 6 else { continue }
+                guard columns.count >= 7 else { continue }
                 
                 let dateString = try columns[0].text()
                 let type = try columns[1].text()
-                let category = try columns[2].text() // Assuming category is in the third column
+                let category = try columns[2].text()
                 let organizer = try columns[3].text()
                 let location = try columns[4].text()
                 let notes = try columns[5].text()
-                let registrationText = try columns[6].text() // Registration status is in the last column
+                let registrationText = try columns[6].text()
                 
                 let dateFormatter = DateFormatter()
                 dateFormatter.dateFormat = "dd-MM-yyyy"

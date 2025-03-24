@@ -4,6 +4,7 @@ struct Match: Identifiable, Codable {
     let id: UUID
     let date: Date
     let type: String
+    let category: String
     let organizer: String
     let location: String
     let notes: String
@@ -15,10 +16,11 @@ struct Match: Identifiable, Codable {
         case closed = "Gesloten"
     }
     
-    init(id: UUID = UUID(), date: Date, type: String, organizer: String, location: String, notes: String, registrationStatus: RegistrationStatus) {
+    init(id: UUID = UUID(), date: Date, type: String, category: String, organizer: String, location: String, notes: String, registrationStatus: RegistrationStatus) {
         self.id = id
         self.date = date
         self.type = type
+        self.category = category
         self.organizer = organizer
         self.location = location
         self.notes = notes
