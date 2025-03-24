@@ -1,5 +1,6 @@
 import Foundation
 import SwiftSoup
+import SwiftUI
 
 @MainActor
 class ScrapingService: ObservableObject {
@@ -19,6 +20,7 @@ class ScrapingService: ObservableObject {
             let url = URL(string: "https://my.orweja.nl/home/kalender/1")!
             var request = URLRequest(url: url)
             request.setValue("Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1", forHTTPHeaderField: "User-Agent")
+            request.timeoutInterval = 30
             
             let (data, response) = try await URLSession.shared.data(for: request)
             
@@ -34,31 +36,62 @@ class ScrapingService: ObservableObject {
                 throw ScrapingError.invalidData
             }
             
+            print("Received HTML length: \(html.count)")
+            
             let doc = try SwiftSoup.parse(html)
             
-            // First, try to find the table with the specific class or structure used by Orweja
-            let tables = try doc.select("table")
+            // Try to find the main content area first
+            let mainContent = try doc.select(".content-area, .main-content, #main-content, main").first()
+            let searchArea = mainContent ?? doc
+            
+            // Look for tables in the content area
+            let tables = try searchArea.select("table")
+            print("Found \(tables.count) tables")
+            
+            // Try to find the table with event data
             guard let matchesTable = tables.first(where: { table in
-                // Look for table headers that match what we expect
-                let headers = try? table.select("th").map { try $0.text() }
-                return headers?.contains { $0.contains("Datum") || $0.contains("Type") } ?? false
+                do {
+                    let headers = try table.select("th, thead td").map { try $0.text().lowercased() }
+                    print("Table headers: \(headers)")
+                    return headers.contains { $0.contains("datum") || $0.contains("type") || $0.contains("categorie") }
+                } catch {
+                    return false
+                }
             }) else {
+                print("No matching table found")
                 throw ScrapingError.tableNotFound
             }
             
             let rows = try matchesTable.select("tr")
-            let rowsArray = Array(rows).dropFirst() // Skip header row
+            print("Found \(rows.count) rows")
             
-            matches = try rowsArray.compactMap { row in
+            // Find header row to determine column indices
+            let headerRow = try matchesTable.select("tr").first()
+            let headerCells = try headerRow?.select("th, td").map { try $0.text().lowercased() } ?? []
+            print("Header cells: \(headerCells)")
+            
+            let dateIndex = headerCells.firstIndex { $0.contains("datum") } ?? 0
+            let typeIndex = headerCells.firstIndex { $0.contains("type") } ?? 1
+            let categoryIndex = headerCells.firstIndex { $0.contains("categorie") } ?? 2
+            let organizerIndex = headerCells.firstIndex { $0.contains("organisator") } ?? 3
+            let locationIndex = headerCells.firstIndex { $0.contains("locatie") } ?? 4
+            let statusIndex = headerCells.firstIndex { $0.contains("status") } ?? 5
+            
+            // Skip header row
+            let dataRows = Array(rows).dropFirst()
+            
+            matches = try dataRows.compactMap { row in
                 let columns = try row.select("td")
-                guard columns.count >= 6 else { return nil }
+                guard columns.count >= max(dateIndex, typeIndex, categoryIndex, organizerIndex, locationIndex, statusIndex) + 1 else {
+                    return nil
+                }
                 
-                let dateString = try columns[0].text().trimmingCharacters(in: .whitespacesAndNewlines)
-                let type = try columns[1].text().trimmingCharacters(in: .whitespacesAndNewlines)
-                let category = try columns[2].text().trimmingCharacters(in: .whitespacesAndNewlines)
-                let organizer = try columns[3].text().trimmingCharacters(in: .whitespacesAndNewlines)
-                let location = try columns[4].text().trimmingCharacters(in: .whitespacesAndNewlines)
-                let registrationStatus = try columns[5].text().trimmingCharacters(in: .whitespacesAndNewlines)
+                let dateString = try columns[dateIndex].text().trimmingCharacters(in: .whitespacesAndNewlines)
+                let type = try columns[typeIndex].text().trimmingCharacters(in: .whitespacesAndNewlines)
+                let category = try columns[categoryIndex].text().trimmingCharacters(in: .whitespacesAndNewlines)
+                let organizer = try columns[organizerIndex].text().trimmingCharacters(in: .whitespacesAndNewlines)
+                let location = try columns[locationIndex].text().trimmingCharacters(in: .whitespacesAndNewlines)
+                let status = try columns[statusIndex].text().trimmingCharacters(in: .whitespacesAndNewlines)
                 
                 // Convert date string to Date
                 let dateFormatter = DateFormatter()
@@ -70,6 +103,16 @@ class ScrapingService: ObservableObject {
                     return nil
                 }
                 
+                let registrationStatus: Match.RegistrationStatus
+                switch status.lowercased() {
+                case let s where s.contains("open") || s.contains("inschrijven"):
+                    registrationStatus = .available
+                case let s where s.contains("gesloten"):
+                    registrationStatus = .closed
+                default:
+                    registrationStatus = .notAvailable
+                }
+                
                 return Match(
                     date: date,
                     type: type,
@@ -77,12 +120,13 @@ class ScrapingService: ObservableObject {
                     organizer: organizer,
                     location: location,
                     notes: "",
-                    registrationStatus: Match.RegistrationStatus(rawValue: registrationStatus) ?? .notAvailable
+                    registrationStatus: registrationStatus
                 )
             }
             
             // Sort matches by date
             matches.sort { $0.date < $1.date }
+            print("Successfully parsed \(matches.count) matches")
             
         } catch {
             self.error = error
@@ -110,11 +154,11 @@ enum ScrapingError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .tableNotFound:
-            return "Kon de wedstrijdtabel niet vinden op de pagina."
+            return "Kon de wedstrijdtabel niet vinden op de pagina. Probeer het later opnieuw."
         case .invalidResponse:
-            return "Ongeldige response van de server."
+            return "Ongeldige response van de server. Controleer je internetverbinding."
         case .invalidData:
-            return "De ontvangen data kon niet worden verwerkt."
+            return "De ontvangen data kon niet worden verwerkt. Probeer het later opnieuw."
         case .httpError(let statusCode):
             return "Server error (code \(statusCode)). Probeer het later opnieuw."
         }
