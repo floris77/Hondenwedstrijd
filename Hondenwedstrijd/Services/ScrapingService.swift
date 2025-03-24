@@ -15,24 +15,28 @@ class ScrapingService: ObservableObject {
     func fetchMatches() async {
         isLoading = true
         error = nil
+        matches = []
         
         do {
-            // First try the calendar endpoint
-            if let matches = try? await fetchFromCalendar() {
-                self.matches = matches
-                return
-            }
+            // Try my.orweja.nl endpoints first
+            let myOrwejaURLs = [
+                "https://my.orweja.nl/home/kalender/1",
+                "https://my.orweja.nl/kalender",
+                "https://my.orweja.nl/m/kalender"
+            ]
             
-            // If that fails, try the mobile endpoint
-            if let matches = try? await fetchFromMobileEndpoint() {
-                self.matches = matches
-                return
-            }
-            
-            // If both fail, try the main website
-            if let matches = try? await fetchFromMainWebsite() {
-                self.matches = matches
-                return
+            for url in myOrwejaURLs {
+                do {
+                    let matches = try await fetchFromURL(URL(string: url)!)
+                    if !matches.isEmpty {
+                        self.matches = matches.sorted { $0.date < $1.date }
+                        print("Successfully fetched \(matches.count) matches from \(url)")
+                        return
+                    }
+                } catch {
+                    print("Failed to fetch from \(url): \(error)")
+                    continue
+                }
             }
             
             // If all attempts fail, throw an error
@@ -45,24 +49,9 @@ class ScrapingService: ObservableObject {
         isLoading = false
     }
     
-    private func fetchFromCalendar() async throws -> [Match] {
-        let url = URL(string: "https://my.orweja.nl/home/kalender/1")!
-        return try await fetchFromURL(url)
-    }
-    
-    private func fetchFromMobileEndpoint() async throws -> [Match] {
-        let url = URL(string: "https://my.orweja.nl/m/kalender")!
-        return try await fetchFromURL(url)
-    }
-    
-    private func fetchFromMainWebsite() async throws -> [Match] {
-        let url = URL(string: "https://www.orweja.nl/")!
-        return try await fetchFromURL(url)
-    }
-    
     private func fetchFromURL(_ url: URL) async throws -> [Match] {
         var request = URLRequest(url: url)
-        request.setValue("Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1", forHTTPHeaderField: "User-Agent")
+        request.setValue("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15", forHTTPHeaderField: "User-Agent")
         request.timeoutInterval = 30
         
         let (data, response) = try await URLSession.shared.data(for: request)
@@ -83,45 +72,64 @@ class ScrapingService: ObservableObject {
         
         let doc = try SwiftSoup.parse(html)
         
-        // Try multiple strategies to find the data
-        let potentialDataContainers = try doc.select("table, .calendar-container, .events-list, .wedstrijden, #calendar, .competition-list")
-        print("Found \(potentialDataContainers.count) potential data containers")
+        // Print the entire HTML structure for debugging
+        print("HTML Structure:")
+        print(try doc.html())
         
-        for container in potentialDataContainers {
-            // Try to parse as a table
-            if let matches = try? parseTableData(container) {
-                return matches
-            }
+        // First try to find a table with specific headers
+        let tables = try doc.select("table")
+        print("Found \(tables.count) tables")
+        
+        for table in tables {
+            let headers = try table.select("th, thead td").map { try $0.text().lowercased() }
+            print("Table headers: \(headers)")
             
-            // Try to parse as a list
-            if let matches = try? parseListData(container) {
+            if headers.contains(where: { $0.contains("datum") }) {
+                return try parseTable(table)
+            }
+        }
+        
+        // If no table is found, try other containers
+        let containers = try doc.select(".calendar-container, .events-list, .wedstrijden, #calendar")
+        for container in containers {
+            if let matches = try? parseContainer(container), !matches.isEmpty {
                 return matches
             }
         }
         
-        throw ScrapingError.noDataFound
+        throw ScrapingError.tableNotFound
     }
     
-    private func parseTableData(_ element: Element) throws -> [Match] {
+    private func parseTable(_ table: Element) throws -> [Match] {
         var matches: [Match] = []
         
-        // Try to find rows (both in regular tables and div-based tables)
-        let rows = try element.select("tr, .row, .event-row, .competition-row")
-        print("Found \(rows.count) potential rows in table")
+        let rows = try table.select("tr")
+        guard rows.count > 1 else { return [] }
         
-        // Try to determine the structure from the first row
-        let headerRow = try rows.first()?.select("th, td, .cell, .header").map { try $0.text().lowercased() }
-        print("Potential headers: \(String(describing: headerRow))")
+        let headers = try rows[0].select("th, td").map { try $0.text().lowercased() }
+        print("Processing table with headers: \(headers)")
         
-        if headerRow == nil || headerRow?.isEmpty == true {
-            return []
-        }
+        let dateIndex = headers.firstIndex { $0.contains("datum") } ?? 0
+        let typeIndex = headers.firstIndex { $0.contains("type") } ?? 1
+        let categoryIndex = headers.firstIndex { $0.contains("categorie") } ?? 2
+        let organizerIndex = headers.firstIndex { $0.contains("organisator") } ?? 3
+        let locationIndex = headers.firstIndex { $0.contains("locatie") } ?? 4
+        let statusIndex = headers.firstIndex { $0.contains("status") } ?? 5
         
-        // Skip header row
-        let dataRows = Array(rows.dropFirst())
-        
-        for row in dataRows {
-            if let match = try? parseRow(row) {
+        for row in rows.dropFirst() {
+            let cells = try row.select("td")
+            guard cells.count >= max(dateIndex, typeIndex, categoryIndex, locationIndex, statusIndex) + 1 else {
+                continue
+            }
+            
+            let dateString = try cells[dateIndex].text().trimmingCharacters(in: .whitespacesAndNewlines)
+            let type = try cells[typeIndex].text().trimmingCharacters(in: .whitespacesAndNewlines)
+            let category = try cells[categoryIndex].text().trimmingCharacters(in: .whitespacesAndNewlines)
+            let organizer = organizerIndex < cells.count ? try cells[organizerIndex].text().trimmingCharacters(in: .whitespacesAndNewlines) : ""
+            let location = try cells[locationIndex].text().trimmingCharacters(in: .whitespacesAndNewlines)
+            let status = try cells[statusIndex].text().trimmingCharacters(in: .whitespacesAndNewlines)
+            
+            if let match = createMatch(dateString: dateString, type: type, category: category, organizer: organizer, location: location, status: status) {
                 matches.append(match)
             }
         }
@@ -129,15 +137,12 @@ class ScrapingService: ObservableObject {
         return matches
     }
     
-    private func parseListData(_ element: Element) throws -> [Match] {
+    private func parseContainer(_ container: Element) throws -> [Match] {
         var matches: [Match] = []
         
-        // Try to find event items
-        let items = try element.select(".event-item, .competition-item, .calendar-item, .wedstrijd-item")
-        print("Found \(items.count) potential list items")
-        
+        let items = try container.select(".event-item, .calendar-item, .wedstrijd-item, div[class*='event'], div[class*='wedstrijd']")
         for item in items {
-            if let match = try? parseListItem(item) {
+            if let match = try? parseContainerItem(item) {
                 matches.append(match)
             }
         }
@@ -145,39 +150,20 @@ class ScrapingService: ObservableObject {
         return matches
     }
     
-    private func parseRow(_ row: Element) throws -> Match? {
-        let cells = try row.select("td, .cell")
-        guard cells.count >= 4 else { return nil }
+    private func parseContainerItem(_ item: Element) throws -> Match? {
+        let dateText = try item.select("[class*='date'], [class*='datum']").first()?.text() ?? ""
+        let typeText = try item.select("[class*='type'], [class*='title']").first()?.text() ?? ""
+        let categoryText = try item.select("[class*='category'], [class*='categorie']").first()?.text() ?? ""
+        let locationText = try item.select("[class*='location'], [class*='locatie']").first()?.text() ?? ""
+        let statusText = try item.select("[class*='status']").first()?.text() ?? ""
         
-        // Try to extract data from cells with flexible position
-        var dateString = ""
-        var type = ""
-        var category = ""
-        var location = ""
-        var status = ""
-        
-        for cell in cells {
-            let text = try cell.text().trimmingCharacters(in: .whitespacesAndNewlines)
-            
-            // Try to determine the content type
-            if text.matches(pattern: "\\d{1,2}[-/]\\d{1,2}[-/]\\d{2,4}") {
-                dateString = text
-            } else if text.lowercased().contains("open") || text.lowercased().contains("gesloten") {
-                status = text
-            } else if text.contains(",") {
-                location = text
-            } else if text.count > 20 {
-                type = text
-            } else {
-                category = text
-            }
-        }
-        
-        // Convert date string to Date
+        return createMatch(dateString: dateText, type: typeText, category: categoryText, organizer: "", location: locationText, status: statusText)
+    }
+    
+    private func createMatch(dateString: String, type: String, category: String, organizer: String, location: String, status: String) -> Match? {
         let dateFormatter = DateFormatter()
         dateFormatter.locale = Locale(identifier: "nl_NL")
         
-        // Try different date formats
         let dateFormats = ["dd-MM-yyyy", "d-M-yyyy", "dd/MM/yyyy", "d/M/yyyy"]
         var date: Date?
         
@@ -208,51 +194,7 @@ class ScrapingService: ObservableObject {
             date: date,
             type: type,
             category: category,
-            organizer: "",
-            location: location,
-            notes: "",
-            registrationStatus: registrationStatus
-        )
-    }
-    
-    private func parseListItem(_ item: Element) throws -> Match? {
-        let dateElement = try item.select(".date, .datum, [data-date]").first()
-        let typeElement = try item.select(".type, .title, .naam").first()
-        let categoryElement = try item.select(".category, .categorie").first()
-        let locationElement = try item.select(".location, .locatie").first()
-        let statusElement = try item.select(".status, .registration").first()
-        
-        guard let dateString = try dateElement?.text() else { return nil }
-        
-        let dateFormatter = DateFormatter()
-        dateFormatter.locale = Locale(identifier: "nl_NL")
-        dateFormatter.dateFormat = "dd-MM-yyyy"
-        
-        guard let date = dateFormatter.date(from: dateString) else {
-            print("Failed to parse date: \(dateString)")
-            return nil
-        }
-        
-        let type = try typeElement?.text() ?? ""
-        let category = try categoryElement?.text() ?? ""
-        let location = try locationElement?.text() ?? ""
-        let status = try statusElement?.text() ?? ""
-        
-        let registrationStatus: Match.RegistrationStatus
-        switch status.lowercased() {
-        case let s where s.contains("open") || s.contains("inschrijven"):
-            registrationStatus = .available
-        case let s where s.contains("gesloten"):
-            registrationStatus = .closed
-        default:
-            registrationStatus = .notAvailable
-        }
-        
-        return Match(
-            date: date,
-            type: type,
-            category: category,
-            organizer: "",
+            organizer: organizer,
             location: location,
             notes: "",
             registrationStatus: registrationStatus
