@@ -212,18 +212,18 @@ class ScrapingService: ObservableObject {
     }
     
     private func parseEvent(_ event: Element) throws -> Match? {
-        // Try multiple selectors for each field
-        let dateSelectors = ["[class*='date'], [class*='datum'], time, .date, .datum"]
-        let typeSelectors = ["[class*='type'], [class*='title'], h3, h4, .type, .title"]
-        let categorySelectors = ["[class*='category'], [class*='categorie'], .category, .categorie"]
-        let locationSelectors = ["[class*='location'], [class*='locatie'], .location, .locatie"]
-        let statusSelectors = ["[class*='status'], [class*='state'], .status, .state"]
+        // Define selectors
+        let dateSelector = "[class*='date'], [class*='datum'], time, .date, .datum"
+        let typeSelector = "[class*='type'], [class*='title'], h3, h4, .type, .title"
+        let categorySelector = "[class*='category'], [class*='categorie'], .category, .categorie"
+        let locationSelector = "[class*='location'], [class*='locatie'], .location, .locatie"
+        let statusSelector = "[class*='status'], [class*='state'], .status, .state"
         
-        let dateText = try event.select(dateSelectors).first()?.text() ?? ""
-        let typeText = try event.select(typeSelectors).first()?.text() ?? ""
-        let categoryText = try event.select(categorySelectors).first()?.text() ?? ""
-        let locationText = try event.select(locationSelectors).first()?.text() ?? ""
-        let statusText = try event.select(statusSelectors).first()?.text() ?? ""
+        let dateText = try event.select(dateSelector).first()?.text() ?? ""
+        let typeText = try event.select(typeSelector).first()?.text() ?? ""
+        let categoryText = try event.select(categorySelector).first()?.text() ?? ""
+        let locationText = try event.select(locationSelector).first()?.text() ?? ""
+        let statusText = try event.select(statusSelector).first()?.text() ?? ""
         
         return createMatch(dateString: dateText, type: typeText, category: categoryText, organizer: "", location: locationText, status: statusText)
     }
