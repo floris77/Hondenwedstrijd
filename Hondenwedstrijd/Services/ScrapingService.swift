@@ -8,6 +8,14 @@ class ScrapingService: ObservableObject {
     @Published var isLoading = false
     @Published var error: Error?
     
+    private let urls = [
+        "https://my.orweja.nl/home/kalender/1",
+        "https://my.orweja.nl/kalender",
+        "https://orweja.nl/jachthondenproeven",
+        "https://orweja.nl/maps",
+        "https://orweja.nl/veldwedstrijden"
+    ]
+    
     var categories: Set<String> {
         Set(matches.map { $0.category })
     }
@@ -18,16 +26,30 @@ class ScrapingService: ObservableObject {
         matches = []
         
         do {
-            // Only try the main calendar URL since others return 404
-            let url = URL(string: "https://my.orweja.nl/home/kalender/1")!
-            let matches = try await fetchFromURL(url)
-            if !matches.isEmpty {
-                self.matches = matches.sorted { $0.date < $1.date }
-                print("Successfully fetched \(matches.count) matches")
-                return
+            var allMatches: [Match] = []
+            
+            // Try each URL in sequence
+            for url in urls {
+                do {
+                    let urlMatches = try await fetchFromURL(URL(string: url)!)
+                    if !urlMatches.isEmpty {
+                        allMatches.append(contentsOf: urlMatches)
+                        print("Successfully fetched \(urlMatches.count) matches from \(url)")
+                    }
+                } catch {
+                    print("Failed to fetch from \(url): \(error)")
+                    continue
+                }
             }
             
-            throw ScrapingError.noDataFound
+            // Remove duplicates and sort
+            matches = Array(Set(allMatches)).sorted { $0.date < $1.date }
+            
+            if matches.isEmpty {
+                throw ScrapingError.noDataFound
+            }
+            
+            print("Total matches found: \(matches.count)")
         } catch {
             self.error = error
             print("Error fetching matches: \(error)")
@@ -55,23 +77,43 @@ class ScrapingService: ObservableObject {
             throw ScrapingError.invalidData
         }
         
-        print("Received HTML length: \(html.count)")
+        print("Received HTML length from \(url.absoluteString): \(html.count)")
         
         let doc = try SwiftSoup.parse(html)
         
-        // Try to find the main content area
-        let mainContent = try doc.select("#main-content, .main-content, .content-area, .page-content").first()
-        let searchArea = mainContent ?? doc
+        // Try multiple selectors for content areas
+        let contentSelectors = [
+            "#main-content",
+            ".main-content",
+            ".content-area",
+            ".page-content",
+            "#content",
+            ".kalender",
+            ".calendar",
+            ".events",
+            ".wedstrijden"
+        ]
+        
+        let searchArea = try doc.select(contentSelectors.joined(separator: ", ")).first() ?? doc
         
         // Print structure for debugging
-        print("Document structure:")
+        print("Document structure for \(url.absoluteString):")
         print(try searchArea.html())
         
-        // Try multiple approaches to find the data
         var matches: [Match] = []
         
-        // 1. Try finding tables directly
-        let tables = try searchArea.select("table")
+        // 1. Try finding tables with specific classes
+        let tableSelectors = [
+            "table.calendar",
+            "table.events",
+            "table.wedstrijden",
+            "table.matches",
+            "table.kalender",
+            ".table",
+            "table"
+        ]
+        
+        let tables = try searchArea.select(tableSelectors.joined(separator: ", "))
         print("Found \(tables.count) tables")
         
         for table in tables {
@@ -80,19 +122,20 @@ class ScrapingService: ObservableObject {
             }
         }
         
-        // 2. Try finding divs that look like table rows
-        let rows = try searchArea.select(".row, .event-row, [class*='row'], [class*='event']")
-        print("Found \(rows.count) potential row elements")
+        // 2. Try finding event containers
+        let eventSelectors = [
+            ".event",
+            ".wedstrijd",
+            ".match",
+            ".calendar-item",
+            "[class*='event']",
+            "[class*='wedstrijd']",
+            "[class*='match']",
+            "[class*='calendar']"
+        ]
         
-        for row in rows {
-            if let match = try? parseRow(row) {
-                matches.append(match)
-            }
-        }
-        
-        // 3. Try finding individual event elements
-        let events = try searchArea.select(".event, .wedstrijd, .calendar-item, [class*='event'], [class*='wedstrijd']")
-        print("Found \(events.count) potential event elements")
+        let events = try searchArea.select(eventSelectors.joined(separator: ", "))
+        print("Found \(events.count) event elements")
         
         for event in events {
             if let match = try? parseEvent(event) {
@@ -100,59 +143,66 @@ class ScrapingService: ObservableObject {
             }
         }
         
-        // 4. Try finding any div with date-like content
-        let allDivs = try searchArea.select("div")
-        print("Scanning \(allDivs.count) divs for date content")
-        
-        for div in allDivs {
-            let text = try div.text()
-            if text.matches(pattern: "\\d{1,2}[-/]\\d{1,2}[-/]\\d{2,4}") {
-                if let match = try? parseDiv(div) {
-                    matches.append(match)
+        // 3. Try finding date-containing elements
+        if matches.isEmpty {
+            let datePattern = "\\d{1,2}[-/.](\\d{1,2}|[A-Za-z]+)[-/.]\\d{2,4}"
+            let elements = try searchArea.select("*")
+            
+            for element in elements {
+                let text = try element.text()
+                if text.matches(pattern: datePattern) {
+                    if let match = try? parseElement(element) {
+                        matches.append(match)
+                    }
                 }
             }
         }
         
-        // Remove duplicates based on date and type
-        matches = Array(Set(matches))
-        
-        if matches.isEmpty {
-            print("No matches found in any parsing attempt")
-            throw ScrapingError.noDataFound
-        }
-        
-        print("Found \(matches.count) total matches")
         return matches
     }
     
     private func parseTable(_ table: Element) throws -> [Match] {
         var matches: [Match] = []
         
-        let rows = try table.select("tr")
+        let rows = try table.select("tr, .row")
         guard rows.count > 1 else { return [] }
         
-        let headers = try rows[0].select("th, td").map { try $0.text().lowercased() }
+        // Try to find headers in multiple ways
+        var headers: [String] = []
+        if let headerRow = rows.first {
+            headers = try headerRow.select("th, td, .header, .cell").map { 
+                try $0.text().lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+        }
+        
         print("Table headers found: \(headers)")
         
-        // Try to find relevant column indices
-        let dateIndex = headers.firstIndex { $0.contains("datum") } ?? 0
-        let typeIndex = headers.firstIndex { $0.contains("type") || $0.contains("soort") } ?? 1
-        let categoryIndex = headers.firstIndex { $0.contains("categorie") || $0.contains("klasse") } ?? 2
-        let organizerIndex = headers.firstIndex { $0.contains("organisator") || $0.contains("organisatie") } ?? 3
-        let locationIndex = headers.firstIndex { $0.contains("locatie") || $0.contains("plaats") } ?? 4
-        let statusIndex = headers.firstIndex { $0.contains("status") || $0.contains("inschrijving") } ?? 5
+        // Map common header variations
+        let headerMappings = [
+            "datum": ["datum", "date", "dag", "day"],
+            "type": ["type", "soort", "proef", "wedstrijd", "event"],
+            "category": ["categorie", "klasse", "category", "class"],
+            "location": ["locatie", "plaats", "location", "venue"],
+            "status": ["status", "inschrijving", "registration", "state"]
+        ]
+        
+        // Find column indices
+        let dateIndex = headers.firstIndex { str in headerMappings["datum"]?.contains(where: { str.contains($0) }) ?? false } ?? 0
+        let typeIndex = headers.firstIndex { str in headerMappings["type"]?.contains(where: { str.contains($0) }) ?? false } ?? 1
+        let categoryIndex = headers.firstIndex { str in headerMappings["category"]?.contains(where: { str.contains($0) }) ?? false } ?? 2
+        let locationIndex = headers.firstIndex { str in headerMappings["location"]?.contains(where: { str.contains($0) }) ?? false } ?? 3
+        let statusIndex = headers.firstIndex { str in headerMappings["status"]?.contains(where: { str.contains($0) }) ?? false } ?? 4
         
         for row in rows.dropFirst() {
-            let cells = try row.select("td")
+            let cells = try row.select("td, .cell")
             if cells.count >= min(dateIndex, typeIndex) + 1 {
                 let dateString = try cells[dateIndex].text().trimmingCharacters(in: .whitespacesAndNewlines)
                 let type = try cells[typeIndex].text().trimmingCharacters(in: .whitespacesAndNewlines)
                 let category = cells.count > categoryIndex ? try cells[categoryIndex].text().trimmingCharacters(in: .whitespacesAndNewlines) : ""
-                let organizer = cells.count > organizerIndex ? try cells[organizerIndex].text().trimmingCharacters(in: .whitespacesAndNewlines) : ""
                 let location = cells.count > locationIndex ? try cells[locationIndex].text().trimmingCharacters(in: .whitespacesAndNewlines) : ""
                 let status = cells.count > statusIndex ? try cells[statusIndex].text().trimmingCharacters(in: .whitespacesAndNewlines) : ""
                 
-                if let match = createMatch(dateString: dateString, type: type, category: category, organizer: organizer, location: location, status: status) {
+                if let match = createMatch(dateString: dateString, type: type, category: category, organizer: "", location: location, status: status) {
                     matches.append(match)
                 }
             }
@@ -161,66 +211,73 @@ class ScrapingService: ObservableObject {
         return matches
     }
     
-    private func parseRow(_ row: Element) throws -> Match? {
-        let cells = try row.select("div, span, td")
-        var dateString = ""
-        var type = ""
-        var category = ""
-        var location = ""
-        var status = ""
-        
-        for cell in cells {
-            let text = try cell.text().trimmingCharacters(in: .whitespacesAndNewlines)
-            if text.matches(pattern: "\\d{1,2}[-/]\\d{1,2}[-/]\\d{2,4}") {
-                dateString = text
-            } else if text.lowercased().contains("open") || text.lowercased().contains("gesloten") {
-                status = text
-            } else if text.contains(",") {
-                location = text
-            } else if text.count > 20 {
-                type = text
-            } else if !text.isEmpty {
-                category = text
-            }
-        }
-        
-        return createMatch(dateString: dateString, type: type, category: category, organizer: "", location: location, status: status)
-    }
-    
     private func parseEvent(_ event: Element) throws -> Match? {
-        let dateText = try event.select("[class*='date'], [class*='datum'], time").first()?.text() ?? ""
-        let typeText = try event.select("[class*='type'], [class*='title'], h3, h4").first()?.text() ?? ""
-        let categoryText = try event.select("[class*='category'], [class*='categorie']").first()?.text() ?? ""
-        let locationText = try event.select("[class*='location'], [class*='locatie']").first()?.text() ?? ""
-        let statusText = try event.select("[class*='status'], [class*='state']").first()?.text() ?? ""
+        // Try multiple selectors for each field
+        let dateSelectors = ["[class*='date'], [class*='datum'], time, .date, .datum"]
+        let typeSelectors = ["[class*='type'], [class*='title'], h3, h4, .type, .title"]
+        let categorySelectors = ["[class*='category'], [class*='categorie'], .category, .categorie"]
+        let locationSelectors = ["[class*='location'], [class*='locatie'], .location, .locatie"]
+        let statusSelectors = ["[class*='status'], [class*='state'], .status, .state"]
+        
+        let dateText = try event.select(dateSelectors).first()?.text() ?? ""
+        let typeText = try event.select(typeSelectors).first()?.text() ?? ""
+        let categoryText = try event.select(categorySelectors).first()?.text() ?? ""
+        let locationText = try event.select(locationSelectors).first()?.text() ?? ""
+        let statusText = try event.select(statusSelectors).first()?.text() ?? ""
         
         return createMatch(dateString: dateText, type: typeText, category: categoryText, organizer: "", location: locationText, status: statusText)
     }
     
-    private func parseDiv(_ div: Element) throws -> Match? {
-        let text = try div.text().trimmingCharacters(in: .whitespacesAndNewlines)
-        let components = text.components(separatedBy: CharacterSet(charactersIn: ",-/"))
+    private func parseElement(_ element: Element) throws -> Match? {
+        let text = try element.text().trimmingCharacters(in: .whitespacesAndNewlines)
         
-        guard components.count >= 2 else { return nil }
+        // Try to extract date and other information
+        let datePattern = "\\d{1,2}[-/.](\\d{1,2}|[A-Za-z]+)[-/.]\\d{2,4}"
+        let regex = try? NSRegularExpression(pattern: datePattern)
+        let range = NSRange(text.startIndex..., in: text)
         
-        let dateString = components[0].trimmingCharacters(in: .whitespacesAndNewlines)
-        let type = components.count > 1 ? components[1].trimmingCharacters(in: .whitespacesAndNewlines) : ""
-        let location = components.count > 2 ? components[2].trimmingCharacters(in: .whitespacesAndNewlines) : ""
+        guard let match = regex?.firstMatch(in: text, range: range),
+              let dateRange = Range(match.range, in: text) else {
+            return nil
+        }
         
-        return createMatch(dateString: dateString, type: type, category: "", organizer: "", location: location, status: "")
+        let dateString = String(text[dateRange])
+        let remainingText = text.replacingCharacters(in: dateRange, with: "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        
+        // Split remaining text into components
+        let components = remainingText.components(separatedBy: CharacterSet(charactersIn: ",-/"))
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        
+        let type = components.first ?? ""
+        let location = components.count > 1 ? components[1] : ""
+        let category = components.count > 2 ? components[2] : ""
+        
+        return createMatch(dateString: dateString, type: type, category: category, organizer: "", location: location, status: "")
     }
     
     private func createMatch(dateString: String, type: String, category: String, organizer: String, location: String, status: String) -> Match? {
         let dateFormatter = DateFormatter()
         dateFormatter.locale = Locale(identifier: "nl_NL")
         
-        let dateFormats = ["dd-MM-yyyy", "d-M-yyyy", "dd/MM/yyyy", "d/M/yyyy", "yyyy-MM-dd"]
-        var date: Date?
+        // Support various date formats including Dutch month names
+        let dateFormats = [
+            "dd-MM-yyyy",
+            "d-M-yyyy",
+            "dd/MM/yyyy",
+            "d/M/yyyy",
+            "yyyy-MM-dd",
+            "dd-MMM-yyyy",
+            "d MMM yyyy",
+            "dd MMM yyyy"
+        ]
         
         // Clean up the date string
         let cleanDateString = dateString.trimmingCharacters(in: .whitespacesAndNewlines)
             .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
         
+        var date: Date?
         for format in dateFormats {
             dateFormatter.dateFormat = format
             if let parsedDate = dateFormatter.date(from: cleanDateString) {
@@ -243,7 +300,7 @@ class ScrapingService: ObservableObject {
         switch status.lowercased() {
         case let s where s.contains("open") || s.contains("inschrijven"):
             registrationStatus = .available
-        case let s where s.contains("gesloten"):
+        case let s where s.contains("gesloten") || s.contains("vol"):
             registrationStatus = .closed
         default:
             registrationStatus = .notAvailable
@@ -269,7 +326,13 @@ class ScrapingService: ObservableObject {
     }
 }
 
-extension ScrapingError: LocalizedError {
+enum ScrapingError: LocalizedError {
+    case tableNotFound
+    case invalidResponse
+    case invalidData
+    case httpError(statusCode: Int)
+    case noDataFound
+    
     var errorDescription: String? {
         switch self {
         case .tableNotFound:
