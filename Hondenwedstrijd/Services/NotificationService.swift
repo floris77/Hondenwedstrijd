@@ -1,6 +1,7 @@
 import Foundation
 import UserNotifications
 import MessageUI
+import SwiftUI
 
 @MainActor
 class NotificationService: ObservableObject {
