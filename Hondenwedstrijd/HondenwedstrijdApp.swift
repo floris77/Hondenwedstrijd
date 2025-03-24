@@ -11,10 +11,17 @@ import UserNotifications
 @main
 struct HondenwedstrijdApp: App {
     @UIApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
+    @AppStorage("isOnboardingCompleted") private var isOnboardingCompleted = false
     
     var body: some Scene {
         WindowGroup {
-            ContentView()
+            if !isOnboardingCompleted {
+                OnboardingView(isOnboardingCompleted: $isOnboardingCompleted)
+            } else {
+                ContentView()
+                    .preferredColorScheme(.light)
+                    .tint(ColorTheme.primary)
+            }
         }
     }
 }
