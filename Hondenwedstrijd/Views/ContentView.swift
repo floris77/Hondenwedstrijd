@@ -13,11 +13,23 @@ struct ContentView: View {
                 }
                 .tag(0)
             
-            NotificationSettingsView()
+            UpcomingMatchesView()
                 .tabItem {
-                    Label("Instellingen", systemImage: "bell")
+                    Label("Aanstaande", systemImage: "calendar")
                 }
                 .tag(1)
+            
+            CompletedMatchesView()
+                .tabItem {
+                    Label("Geschiedenis", systemImage: "checkmark.circle")
+                }
+                .tag(2)
+            
+            NotificationSettingsView()
+                .tabItem {
+                    Label("Instellingen", systemImage: "gear")
+                }
+                .tag(3)
         }
         .environmentObject(scrapingService)
         .environmentObject(notificationService)
@@ -36,54 +48,62 @@ struct MatchListView: View {
     
     var body: some View {
         NavigationView {
-            VStack {
-                // Filter Section
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 12) {
-                        FilterChip(title: "Alle", isSelected: selectedCategory == nil) {
-                            selectedCategory = nil
+            ZStack {
+                ColorTheme.background.ignoresSafeArea()
+                
+                VStack(spacing: 0) {
+                    // Filter Section
+                    VStack(spacing: 8) {
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            HStack(spacing: 12) {
+                                FilterChip(title: "Alle", isSelected: selectedCategory == nil) {
+                                    selectedCategory = nil
+                                }
+                                
+                                ForEach(Array(scrapingService.categories), id: \.self) { category in
+                                    FilterChip(title: category, isSelected: selectedCategory == category) {
+                                        selectedCategory = category
+                                    }
+                                }
+                            }
+                            .padding(.horizontal)
                         }
                         
-                        ForEach(Array(scrapingService.categories), id: \.self) { category in
-                            FilterChip(title: category, isSelected: selectedCategory == category) {
-                                selectedCategory = category
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            HStack(spacing: 12) {
+                                FilterChip(title: "Alle Status", isSelected: selectedStatus == nil) {
+                                    selectedStatus = nil
+                                }
+                                
+                                ForEach([Match.RegistrationStatus.available, .notAvailable, .closed], id: \.self) { status in
+                                    FilterChip(title: status.rawValue, isSelected: selectedStatus == status) {
+                                        selectedStatus = status
+                                    }
+                                }
                             }
+                            .padding(.horizontal)
                         }
                     }
-                    .padding(.horizontal)
-                }
-                .padding(.vertical, 8)
-                
-                // Status Filter
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 12) {
-                        FilterChip(title: "Alle Status", isSelected: selectedStatus == nil) {
-                            selectedStatus = nil
-                        }
-                        
-                        ForEach([Match.RegistrationStatus.available, .notAvailable, .closed], id: \.self) { status in
-                            FilterChip(title: status.rawValue, isSelected: selectedStatus == status) {
-                                selectedStatus = status
-                            }
-                        }
-                    }
-                    .padding(.horizontal)
-                }
-                .padding(.bottom, 8)
-                
-                // Matches List
-                Group {
+                    .padding(.vertical, 8)
+                    .background(Color.white.opacity(0.05))
+                    
+                    // Matches List
                     if scrapingService.isLoading {
+                        Spacer()
                         ProgressView("Laden...")
                             .foregroundColor(ColorTheme.primary)
+                        Spacer()
                     } else if let error = scrapingService.error {
-                        VStack {
+                        Spacer()
+                        VStack(spacing: 16) {
                             Text("Er is een fout opgetreden")
                                 .font(.headline)
                                 .foregroundColor(ColorTheme.error)
                             Text(error.localizedDescription)
                                 .font(.subheadline)
                                 .foregroundColor(ColorTheme.error)
+                                .multilineTextAlignment(.center)
+                                .padding(.horizontal)
                             Button("Opnieuw proberen") {
                                 Task {
                                     await scrapingService.fetchMatches()
@@ -92,12 +112,17 @@ struct MatchListView: View {
                             .buttonStyle(.bordered)
                             .tint(ColorTheme.primary)
                         }
+                        Spacer()
                     } else {
-                        List(scrapingService.filteredMatches(category: selectedCategory, status: selectedStatus)) { match in
-                            MatchRow(match: match)
+                        ScrollView {
+                            LazyVStack(spacing: 12) {
+                                ForEach(scrapingService.filteredMatches(category: selectedCategory, status: selectedStatus)) { match in
+                                    MatchRow(match: match)
+                                        .padding(.horizontal)
+                                }
+                            }
+                            .padding(.vertical)
                         }
-                        .listStyle(PlainListStyle())
-                        .scrollContentBackground(.hidden)
                     }
                 }
             }
@@ -105,8 +130,149 @@ struct MatchListView: View {
             .refreshable {
                 await scrapingService.fetchMatches()
             }
-            .background(ColorTheme.background)
         }
+    }
+}
+
+struct UpcomingMatchesView: View {
+    @EnvironmentObject var notificationService: NotificationService
+    @EnvironmentObject var scrapingService: ScrapingService
+    
+    var upcomingMatches: [Match] {
+        scrapingService.matches.filter { match in
+            notificationService.hasNotificationEnabled(for: match.id)
+        }.sorted { $0.date < $1.date }
+    }
+    
+    var body: some View {
+        NavigationView {
+            ZStack {
+                ColorTheme.background.ignoresSafeArea()
+                
+                if upcomingMatches.isEmpty {
+                    VStack(spacing: 16) {
+                        Image(systemName: "bell.slash")
+                            .font(.system(size: 50))
+                            .foregroundColor(ColorTheme.secondary)
+                        Text("Geen aanstaande wedstrijden")
+                            .font(.headline)
+                            .foregroundColor(ColorTheme.text)
+                        Text("Zet notificaties aan voor wedstrijden die je niet wilt missen")
+                            .font(.subheadline)
+                            .foregroundColor(ColorTheme.text.opacity(0.8))
+                            .multilineTextAlignment(.center)
+                            .padding(.horizontal)
+                    }
+                } else {
+                    ScrollView {
+                        LazyVStack(spacing: 12) {
+                            ForEach(upcomingMatches) { match in
+                                MatchRow(match: match)
+                                    .padding(.horizontal)
+                            }
+                        }
+                        .padding(.vertical)
+                    }
+                }
+            }
+            .navigationTitle("Aanstaande")
+        }
+    }
+}
+
+struct CompletedMatchesView: View {
+    @AppStorage("completedMatches") private var completedMatchesData: Data = Data()
+    @State private var completedMatches: [CompletedMatch] = []
+    
+    var body: some View {
+        NavigationView {
+            ZStack {
+                ColorTheme.background.ignoresSafeArea()
+                
+                if completedMatches.isEmpty {
+                    VStack(spacing: 16) {
+                        Image(systemName: "checkmark.circle")
+                            .font(.system(size: 50))
+                            .foregroundColor(ColorTheme.secondary)
+                        Text("Geen voltooide wedstrijden")
+                            .font(.headline)
+                            .foregroundColor(ColorTheme.text)
+                        Text("Hier zie je een overzicht van wedstrijden waaraan je hebt deelgenomen")
+                            .font(.subheadline)
+                            .foregroundColor(ColorTheme.text.opacity(0.8))
+                            .multilineTextAlignment(.center)
+                            .padding(.horizontal)
+                    }
+                } else {
+                    ScrollView {
+                        LazyVStack(spacing: 12) {
+                            ForEach(completedMatches) { match in
+                                CompletedMatchRow(match: match)
+                                    .padding(.horizontal)
+                            }
+                        }
+                        .padding(.vertical)
+                    }
+                }
+            }
+            .navigationTitle("Geschiedenis")
+        }
+        .onAppear {
+            loadCompletedMatches()
+        }
+    }
+    
+    private func loadCompletedMatches() {
+        if let decoded = try? JSONDecoder().decode([CompletedMatch].self, from: completedMatchesData) {
+            completedMatches = decoded.sorted { $0.completionDate > $1.completionDate }
+        }
+    }
+}
+
+struct CompletedMatchRow: View {
+    let match: CompletedMatch
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(match.type)
+                .font(.headline)
+                .foregroundColor(ColorTheme.text)
+            
+            Text(match.category)
+                .font(.subheadline)
+                .foregroundColor(ColorTheme.secondary)
+            
+            Text(match.location)
+                .font(.subheadline)
+                .foregroundColor(ColorTheme.text.opacity(0.8))
+            
+            Text(match.completionDate, style: .date)
+                .font(.subheadline)
+                .foregroundColor(ColorTheme.text.opacity(0.8))
+            
+            if !match.notes.isEmpty {
+                Text(match.notes)
+                    .font(.subheadline)
+                    .foregroundColor(ColorTheme.text.opacity(0.8))
+                    .padding(.top, 4)
+            }
+            
+            if let ranking = match.ranking {
+                HStack {
+                    Image(systemName: "trophy.fill")
+                        .foregroundColor(ColorTheme.primary)
+                    Text("Plaats \(ranking)")
+                        .font(.subheadline)
+                        .foregroundColor(ColorTheme.primary)
+                }
+                .padding(.top, 4)
+            }
+        }
+        .padding(.vertical, 8)
+        .padding(.horizontal, 12)
+        .background(Color.white)
+        .cornerRadius(12)
+        .shadow(color: ColorTheme.primary.opacity(0.1), radius: 4, x: 0, y: 2)
     }
 }
 

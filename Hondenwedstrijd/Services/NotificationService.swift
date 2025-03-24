@@ -2,15 +2,19 @@ import Foundation
 import UserNotifications
 import MessageUI
 
+@MainActor
 class NotificationService: ObservableObject {
+    static let shared = NotificationService()
+    
     @Published var isPushNotificationsEnabled = false
     @Published var isSMSNotificationsEnabled = false
     @Published var isEmailNotificationsEnabled = false
     
-    static let shared = NotificationService()
+    @AppStorage("notifiedMatches") private var notifiedMatchesData: Data = Data()
+    private var notifiedMatches: Set<UUID> = []
     
     private init() {
-        checkNotificationStatus()
+        loadNotifiedMatches()
     }
     
     private func checkNotificationStatus() {
@@ -22,22 +26,58 @@ class NotificationService: ObservableObject {
     }
     
     func requestPushNotificationPermission() {
-        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .badge, .sound]) { granted, error in
+        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .badge, .sound]) { success, error in
             DispatchQueue.main.async {
-                self.isPushNotificationsEnabled = granted
+                self.isPushNotificationsEnabled = success
             }
         }
     }
     
-    func scheduleMatchNotification(for match: Match) {
+    func toggleNotification(for matchId: UUID) {
+        if notifiedMatches.contains(matchId) {
+            notifiedMatches.remove(matchId)
+        } else {
+            notifiedMatches.insert(matchId)
+        }
+        saveNotifiedMatches()
+    }
+    
+    func hasNotificationEnabled(for matchId: UUID) -> Bool {
+        notifiedMatches.contains(matchId)
+    }
+    
+    private func loadNotifiedMatches() {
+        if let decoded = try? JSONDecoder().decode(Set<UUID>.self, from: notifiedMatchesData) {
+            notifiedMatches = decoded
+        }
+    }
+    
+    private func saveNotifiedMatches() {
+        if let encoded = try? JSONEncoder().encode(notifiedMatches) {
+            notifiedMatchesData = encoded
+        }
+    }
+    
+    func scheduleNotification(for match: Match) {
+        guard isPushNotificationsEnabled else { return }
+        
         let content = UNMutableNotificationContent()
-        content.title = "Nieuwe Wedstrijd Beschikbaar"
-        content.body = "\(match.type) in \(match.location) is nu open voor inschrijving"
+        content.title = "Aanstaande Wedstrijd"
+        content.body = "\(match.type) in \(match.location) begint binnenkort!"
         content.sound = .default
         
-        // Schedule notification for when registration opens
-        let trigger = UNTimeIntervalNotificationTrigger(timeInterval: 3600, repeats: false)
-        let request = UNNotificationRequest(identifier: match.id.uuidString, content: content, trigger: trigger)
+        // Schedule notification for 1 day before the match
+        let calendar = Calendar.current
+        guard let notificationDate = calendar.date(byAdding: .day, value: -1, to: match.date) else { return }
+        
+        let components = calendar.dateComponents([.year, .month, .day, .hour, .minute], from: notificationDate)
+        let trigger = UNCalendarNotificationTrigger(dateMatching: components, repeats: false)
+        
+        let request = UNNotificationRequest(
+            identifier: match.id.uuidString,
+            content: content,
+            trigger: trigger
+        )
         
         UNUserNotificationCenter.current().add(request)
     }
