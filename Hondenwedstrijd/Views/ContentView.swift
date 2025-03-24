@@ -53,36 +53,34 @@ struct MatchListView: View {
                 
                 VStack(spacing: 0) {
                     // Filter Section
-                    VStack(spacing: 8) {
-                        ScrollView(.horizontal, showsIndicators: false) {
-                            HStack(spacing: 12) {
-                                FilterChip(title: "Alle", isSelected: selectedCategory == nil) {
-                                    selectedCategory = nil
-                                }
-                                
-                                ForEach(Array(scrapingService.categories), id: \.self) { category in
-                                    FilterChip(title: category, isSelected: selectedCategory == category) {
-                                        selectedCategory = category
-                                    }
+                    VStack(spacing: 12) {
+                        // Category filters
+                        FlowLayout(spacing: 8) {
+                            FilterChip(title: "Alle", isSelected: selectedCategory == nil) {
+                                selectedCategory = nil
+                            }
+                            
+                            ForEach(Array(scrapingService.categories), id: \.self) { category in
+                                FilterChip(title: category, isSelected: selectedCategory == category) {
+                                    selectedCategory = category
                                 }
                             }
-                            .padding(.horizontal)
                         }
+                        .padding(.horizontal)
                         
-                        ScrollView(.horizontal, showsIndicators: false) {
-                            HStack(spacing: 12) {
-                                FilterChip(title: "Alle Status", isSelected: selectedStatus == nil) {
-                                    selectedStatus = nil
-                                }
-                                
-                                ForEach([Match.RegistrationStatus.available, .notAvailable, .closed], id: \.self) { status in
-                                    FilterChip(title: status.rawValue, isSelected: selectedStatus == status) {
-                                        selectedStatus = status
-                                    }
+                        // Status filters
+                        FlowLayout(spacing: 8) {
+                            FilterChip(title: "Alle Status", isSelected: selectedStatus == nil) {
+                                selectedStatus = nil
+                            }
+                            
+                            ForEach([Match.RegistrationStatus.available, .notAvailable, .closed], id: \.self) { status in
+                                FilterChip(title: status.rawValue, isSelected: selectedStatus == status) {
+                                    selectedStatus = status
                                 }
                             }
-                            .padding(.horizontal)
                         }
+                        .padding(.horizontal)
                     }
                     .padding(.vertical, 8)
                     .background(Color.white.opacity(0.05))
@@ -373,6 +371,93 @@ struct NotificationSettingsView: View {
             .scrollContentBackground(.hidden)
             .background(ColorTheme.background)
         }
+    }
+}
+
+struct FlowLayout: Layout {
+    var spacing: CGFloat
+    
+    init(spacing: CGFloat = 8) {
+        self.spacing = spacing
+    }
+    
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let rows = computeRows(proposal: proposal, subviews: subviews)
+        
+        var height: CGFloat = 0
+        for row in rows {
+            height += row.maxY
+            if row != rows.last {
+                height += spacing
+            }
+        }
+        
+        return CGSize(width: proposal.width ?? 0, height: height)
+    }
+    
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        let rows = computeRows(proposal: proposal, subviews: subviews)
+        
+        var y = bounds.minY
+        for row in rows {
+            // Center row items horizontally
+            let rowXOffset = (bounds.width - (row.maxX - row.minX)) / 2
+            
+            for element in row.elements {
+                let point = CGPoint(x: element.x + rowXOffset, y: y)
+                element.subview.place(at: point, proposal: .unspecified)
+            }
+            
+            y += row.maxY + spacing
+        }
+    }
+    
+    private func computeRows(proposal: ProposedViewSize, subviews: Subviews) -> [Row] {
+        var rows: [Row] = []
+        var currentRow = Row()
+        var x: CGFloat = 0
+        let maxWidth = proposal.width ?? 0
+        
+        for subview in subviews {
+            let size = subview.sizeThatFits(.unspecified)
+            
+            if x + size.width > maxWidth && !currentRow.elements.isEmpty {
+                rows.append(currentRow)
+                currentRow = Row()
+                x = 0
+            }
+            
+            currentRow.elements.append(RowElement(subview: subview, size: size, x: x))
+            x += size.width + spacing
+        }
+        
+        if !currentRow.elements.isEmpty {
+            rows.append(currentRow)
+        }
+        
+        return rows
+    }
+    
+    struct Row {
+        var elements: [RowElement] = []
+        
+        var maxY: CGFloat {
+            elements.map { $0.size.height }.max() ?? 0
+        }
+        
+        var maxX: CGFloat {
+            elements.last?.x ?? 0 + (elements.last?.size.width ?? 0)
+        }
+        
+        var minX: CGFloat {
+            elements.first?.x ?? 0
+        }
+    }
+    
+    struct RowElement {
+        let subview: LayoutSubview
+        let size: CGSize
+        let x: CGFloat
     }
 }
 
